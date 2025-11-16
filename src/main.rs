@@ -14,7 +14,7 @@ async fn main() -> io::Result<()> {
     prepare_exports(registry.clone()).await;
 
     let addr = SocketAddrV6::new(std::net::Ipv6Addr::UNSPECIFIED, 10809, 0, 0);
-    server::listen(&addr, registry).await
+    server::listen(addr, registry).await
 }
 
 async fn prepare_exports(registry: NbdExportRegistry) {

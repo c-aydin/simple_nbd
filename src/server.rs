@@ -14,7 +14,7 @@ use super::constants::*;
 use super::export::{NbdExportRegistry, NbdExportRegistryExt, NbdReply, NbdRequest, RequestType};
 
 #[instrument(skip(addr, registry))]
-pub async fn listen(addr: &SocketAddrV6, registry: NbdExportRegistry) -> Result<(), Error> {
+pub async fn listen(addr: SocketAddrV6, registry: NbdExportRegistry) -> Result<(), Error> {
     info!(address = %addr, "Starting NBD server");
 
     let listener = TcpListener::bind(addr).await?;
