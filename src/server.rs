@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::io::{self, Error};
 use std::net::SocketAddrV6;
 
@@ -300,30 +301,19 @@ pub async fn nbd_session(stream: TcpStream, registry: NbdExportRegistry) -> io::
 
     // --- 3. Transmission Phase ---
     info!("Entering Transmission Phase");
+    let mut to_backend = VecDeque::new();
+    let mut to_client = VecDeque::new();
     loop {
         tokio::select! {
             // handle messages from client
             Some(result) = client_receiver.next() => {
-                let msg = match result {
-                    Ok(m) => m,
+                match result {
+                    Ok(m) => {to_backend.push_back(m);},
                     Err(e) => {
                         warn!(error = %e, "Error reading message from client, terminating session");
                         return Err(e);
                     }
                 };
-                let req = match message_to_request(&msg) {
-                    Ok(r) => r,
-                    Err(ref e) if e.kind() == io::ErrorKind::ConnectionAborted => {
-                        info!("Client requested disconnect");
-                        break;
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "Failed to convert message to request, skipping");
-                        continue;
-                    }
-                };
-                // trace!("Forwarding request to backend: {:?}", req);
-                backend_sender.send(req.clone()).await.unwrap();
             }
 
             // handle replies from backend
@@ -331,8 +321,7 @@ pub async fn nbd_session(stream: TcpStream, registry: NbdExportRegistry) -> io::
                 match result {
                     Some(r) => {
                         trace!("Received reply from backend: {}", r.cookie);
-                        let reply_msg = reply_to_message(&r)?;
-                        client_sender.send(reply_msg).await?;
+                        to_client.push_back(r);
                     },
                     None => {
                         info!("Backend reply channel closed, terminating session");
@@ -342,6 +331,26 @@ pub async fn nbd_session(stream: TcpStream, registry: NbdExportRegistry) -> io::
                 };
             }
 
+        }
+        while let Some(msg) = to_backend.pop_front() {
+            let req = match message_to_request(&msg) {
+                Ok(r) => r,
+                Err(ref e) if e.kind() == io::ErrorKind::ConnectionAborted => {
+                    info!("Client requested disconnect");
+                    break;
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to convert message to request, skipping");
+                    continue;
+                }
+            };
+            trace!("Sending request to backend: {}", req.cookie);
+            backend_sender.send(req).await.unwrap();
+        }
+        while let Some(reply) = to_client.pop_front() {
+            trace!("Sending reply to client: {}", reply.cookie);
+            let reply_msg = reply_to_message(&reply)?;
+            client_sender.send(reply_msg).await.unwrap();
         }
     }
 
